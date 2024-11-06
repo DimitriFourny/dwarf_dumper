@@ -5,8 +5,8 @@ namespace Dwarf32 {
   struct CompilationUnitHdr {
     uint32_t unit_length;
     uint16_t version;
-    uint32_t debug_abbrev_offset;
-    uint8_t address_size;
+    uint32_t abbrev_offset;
+    uint8_t  address_size;
   } __attribute__((packed, aligned(1)));
 
   enum Tag {

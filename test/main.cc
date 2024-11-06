@@ -11,7 +11,10 @@ class classA : public classB {
 public:
     classA() = default;
     virtual ~classA() {
-        printf("hello\n");
+        printf("classA\n");
+    }
+    virtual void myVirtualMethod() {
+      printf("classA myVirtualMethod\n");
     }
 
     int memberZ;
@@ -20,7 +23,7 @@ private:
     classB* ptrToB;
     classB inlineB;
     int memberD;
-    int8_t memberB;
+    uint8_t memberB;
     char memberC;
     EnumType enum_member;
     float float_array[3];
@@ -30,6 +33,7 @@ private:
 int main() {
     classA objA;
     printf("a = %p\n", &objA);
+    objA.myVirtualMethod();
 
     return 0;
 }

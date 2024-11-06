@@ -1,74 +1,39 @@
-#include "ElfFile.h"
+#include "DwarfFile.h"
 #include "debug.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+// TODO: add bounds check!
 
-ElfFile::ElfFile(std::string filepath, bool& success) :
-  memfile_(nullptr), debug_info_(nullptr), debug_info_size_(0),
-  debug_abbrev_(nullptr), debug_abbrev_size_(0) {
-  // Copy the file in memory
-  FILE* hfile = fopen(filepath.c_str(), "rb");
-  if (!hfile) {
-    fprintf(stderr, "ERR: Failed to open '%s'\n", filepath.c_str());
-    success = false;
-    return;
-  }
-  success = true;
 
-  fseek(hfile, 0, SEEK_END);
-  filesize_ = ftell(hfile);
-  fseek(hfile, 0, SEEK_SET);
-  DBG_PRINTF("Target file size: 0x%lx\n", filesize_);
-
-  memfile_ = reinterpret_cast<unsigned char*>(malloc(filesize_));
-  size_t nb_read = fread(memfile_, filesize_, 1, hfile);
-  fclose(hfile);
-  if (nb_read != 1) {
-    fprintf(stderr, "ERR: Failed to read '%s'\n", filepath.c_str());
-    success = false;
-    return;
-  }
-
-  // Save the headers pointers
-  file_header_ = reinterpret_cast<Elf64_Ehdr*>(memfile_);
-  program_header_ = reinterpret_cast<Elf64_Phdr*>(memfile_ 
-                                                  + file_header_->e_phoff);
-  section_header_ = reinterpret_cast<Elf64_Shdr*>(memfile_ 
-                                                  + file_header_->e_shoff);
-
-  char* names = reinterpret_cast<char*>(memfile_
-                        + section_header_[file_header_->e_shstrndx].sh_offset);
-
-  // Search the .debug_info and .debug_abbrev
-  for (int i = 0; i < file_header_->e_shnum; i++) {
-    char* name = &names[section_header_[i].sh_name];
-    if (!strcmp(name, ".debug_info")) {
-      debug_info_ = reinterpret_cast<unsigned char*>(memfile_ 
-                                                + section_header_[i].sh_offset);
-      debug_info_size_ = section_header_[i].sh_size;
-    } else if (!strcmp(name, ".debug_abbrev")) {
-      debug_abbrev_ = reinterpret_cast<unsigned char*>(memfile_ 
-                                                + section_header_[i].sh_offset);
-      debug_abbrev_size_ = section_header_[i].sh_size;
-    } else if (!strcmp(name, ".debug_str")) {
-      debug_str_ = reinterpret_cast<char*>(memfile_ 
-                                          + section_header_[i].sh_offset);
-      debug_str_size_ = section_header_[i].sh_size;
-    }
-  }
-
-  success = (debug_info_ && debug_abbrev_);
+void DwarfFile::SetDebugPointers(void* debug_info, size_t debug_info_size, 
+                                 void* debug_abbrev, size_t debug_abbrev_size, 
+                                 void* debug_str, size_t debug_str_size) 
+{
+  debug_info_ = debug_info;
+  debug_info_size_ = debug_info_size;
+  debug_abbrev_ = debug_abbrev;
+  debug_abbrev_size_ = debug_abbrev_size;
+  debug_str_ = debug_str;
+  debug_str_size_ = debug_str_size;
+  is_loaded_ = true;
 }
 
-ElfFile::~ElfFile() {
-  if (memfile_) {
-    free(memfile_);
+bool DwarfFile::IsValidFilePtr(void* ptr, size_t size) 
+{
+  const void* file_begin = memfile_;
+  const void* file_end = memfile_ + filesize_;
+  const char* cptr = reinterpret_cast<char*>(ptr);
+
+  if (cptr + size < cptr) {
+    return false;           // Overflow
   }
+  return (cptr >= file_begin) && (cptr + size < file_end);
 }
 
 // static
-uint32_t ElfFile::ULEB128(unsigned char* &data, size_t& bytes_available) {
+uint32_t DwarfFile::ULEB128(unsigned char* &data, size_t& bytes_available) 
+{
   uint32_t result = 0;
 
   unsigned int shift = 0;
@@ -78,11 +43,11 @@ uint32_t ElfFile::ULEB128(unsigned char* &data, size_t& bytes_available) {
     bytes_available--;
 
     if (byte < 0x80) {
-      result += byte << (shift*8);
+      result += byte << (shift*7);
       return result;
     } else {
       byte -= 0x80;
-      result += byte << (shift*8);
+      result += byte << (shift*7);
     }
 
     shift++;
@@ -92,8 +57,8 @@ uint32_t ElfFile::ULEB128(unsigned char* &data, size_t& bytes_available) {
 }
 
 // static
-void ElfFile::PassData(Dwarf32::Form form, unsigned char* &data, 
-                                                      size_t& bytes_available) {
+void DwarfFile::PassData(Dwarf32::Form form, unsigned char* &data, size_t& bytes_available) 
+{
   uint32_t length = 0;
 
   switch(form) {
@@ -101,11 +66,11 @@ void ElfFile::PassData(Dwarf32::Form form, unsigned char* &data,
     case Dwarf32::Form::DW_FORM_addr:
       data += sizeof(uint64_t);
       bytes_available -= sizeof(uint64_t);
-        break;
+      break;
 
     // Block
     case Dwarf32::Form::DW_FORM_block:
-      length = ElfFile::ULEB128(data, bytes_available);
+      length = DwarfFile::ULEB128(data, bytes_available);
       data += length;
       bytes_available -= length;
       break;
@@ -143,15 +108,15 @@ void ElfFile::PassData(Dwarf32::Form form, unsigned char* &data,
       bytes_available -= 8;
       break;
     case Dwarf32::Form::DW_FORM_sdata:
-      ElfFile::ULEB128(data, bytes_available);
+      DwarfFile::ULEB128(data, bytes_available);
       break;
     case Dwarf32::Form::DW_FORM_udata:
-      ElfFile::ULEB128(data, bytes_available);
+      DwarfFile::ULEB128(data, bytes_available);
       break;
 
     // Expression or location
     case Dwarf32::Form::DW_FORM_exprloc:
-      length = ElfFile::ULEB128(data, bytes_available);
+      length = DwarfFile::ULEB128(data, bytes_available);
       data += length;
       bytes_available -= length;
       break;
@@ -188,7 +153,7 @@ void ElfFile::PassData(Dwarf32::Form form, unsigned char* &data,
       bytes_available -= 8;
       break;
     case Dwarf32::Form::DW_FORM_ref_udata:
-      ElfFile::ULEB128(data, bytes_available);
+      DwarfFile::ULEB128(data, bytes_available);
       break;
     case Dwarf32::Form::DW_FORM_ref_addr:
       data += 4;
@@ -219,8 +184,8 @@ void ElfFile::PassData(Dwarf32::Form form, unsigned char* &data,
   }
 }
 
-uint64_t ElfFile::FormDataValue(Dwarf32::Form form, unsigned char* &info, 
-                                                      size_t& bytes_available) {
+uint64_t DwarfFile::FormDataValue(Dwarf32::Form form, unsigned char* &info, size_t& bytes_available) 
+{
   uint64_t value = 0;
 
   switch(form) {
@@ -256,10 +221,10 @@ uint64_t ElfFile::FormDataValue(Dwarf32::Form form, unsigned char* &info,
     case Dwarf32::Form::DW_FORM_udata:
     case Dwarf32::Form::DW_FORM_ref_udata:
     case Dwarf32::Form::DW_FORM_indirect:
-      value = ElfFile::ULEB128(info, bytes_available);
+      value = DwarfFile::ULEB128(info, bytes_available);
       break;
     case Dwarf32::Form::DW_FORM_exprloc:
-      value = ElfFile::ULEB128(info, bytes_available);
+      value = DwarfFile::ULEB128(info, bytes_available);
       info += value;
       bytes_available -= value;
       break;
@@ -271,8 +236,8 @@ uint64_t ElfFile::FormDataValue(Dwarf32::Form form, unsigned char* &info,
   return value;
 };
 
-char* ElfFile::FormStringValue(Dwarf32::Form form, unsigned char* &info, 
-                                                      size_t& bytes_available) {
+char* DwarfFile::FormStringValue(Dwarf32::Form form, unsigned char* &info, size_t& bytes_available) 
+{
   char* str = nullptr;
   uint32_t str_pos = 0;
 
@@ -281,7 +246,7 @@ char* ElfFile::FormStringValue(Dwarf32::Form form, unsigned char* &info,
       str_pos = *reinterpret_cast<uint32_t*>(info);
       info += sizeof(str_pos);
       bytes_available -= sizeof(str_pos);
-      str = &debug_str_[str_pos];
+      str = reinterpret_cast<char*>(debug_str_) + str_pos;
       break;
     case Dwarf32::Form::DW_FORM_string:
       str = reinterpret_cast<char*>(info);
@@ -300,43 +265,48 @@ char* ElfFile::FormStringValue(Dwarf32::Form form, unsigned char* &info,
   return str;
 };
 
-bool ElfFile::LoadAbbrevTags(uint32_t abbrev_offset) {
-  if (!debug_info_ || !debug_abbrev_) {
-      return false;
-  }
+bool DwarfFile::LoadAbbrevTags(uint32_t abbrev_offset) 
+{
+  // TODO: for optimization, if we have previously parsed the same abbrev_offset, don't parse it again and just
+  //       don't clear compilation_unit_.
   compilation_unit_.clear();
 
-  unsigned char* abbrev = reinterpret_cast<unsigned char*>(debug_abbrev_ 
-                                                          + abbrev_offset);
+  unsigned char* abbrev = reinterpret_cast<unsigned char*>(debug_abbrev_) + abbrev_offset;
   size_t abbrev_bytes = debug_abbrev_size_ - abbrev_offset;
 
   // For all compilation tags
-  while (abbrev_bytes > 0 && abbrev[0]) {
+  while (abbrev_bytes > 0) {
     struct TagSection section;
-    section.number = ElfFile::ULEB128(abbrev, abbrev_bytes);
-    DBG_PRINTF(".abbrev+%lx\t Tag Number %d\n",
-        abbrev - debug_abbrev_, section.number);
-    section.type =
-        static_cast<Dwarf32::Tag>(ElfFile::ULEB128(abbrev, abbrev_bytes));
+    section.number = DwarfFile::ULEB128(abbrev, abbrev_bytes);
+    if (section.number == 0) {
+      // End of the tags list
+      break;
+    }
+
+    // DBG_PRINTF(".abbrev+%lx\t Tag Number %d\n", 
+    //     abbrev - reinterpret_cast<unsigned char*>(debug_abbrev_), section.number);
+
+    section.type = static_cast<Dwarf32::Tag>(DwarfFile::ULEB128(abbrev, abbrev_bytes));
     section.has_children = *abbrev;
     abbrev++;
     abbrev_bytes--;
     section.ptr = abbrev;
 
     if (compilation_unit_.find(section.number) != compilation_unit_.end()) {
-        fprintf(stderr, "ERR: Section number %d already exists\n", section.number);
-        compilation_unit_.clear();
-        return false;
+      fprintf(stderr, "ERR: Section number %d already exists\n", section.number);
+      compilation_unit_.clear();
+      return false;
     }
     compilation_unit_[section.number] = section;
 
     while (abbrev_bytes > 0 && abbrev[0]) { // For all attributes
-        abbrev++;
+      abbrev++;
     }
     abbrev += 2;
     abbrev_bytes -= 2;
   }
 
+  DBG_PRINTF("compilation_unit_.size()  = %lu\n", compilation_unit_.size());
   return true;
 }
 
@@ -345,7 +315,7 @@ bool ElfFile::LoadAbbrevTags(uint32_t abbrev_offset) {
     tree_builder_.AddElement(TreeBuilder::ElementType::element_type, tag_id); \
     break;
 
-void ElfFile::RegisterNewTag(Dwarf32::Tag tag, uint64_t tag_id) {
+void DwarfFile::RegisterNewTag(Dwarf32::Tag tag, uint64_t tag_id) {
   switch (tag) {
     CASE_REGISTER_NEW_TAG(DW_TAG_array_type, array_type)
     CASE_REGISTER_NEW_TAG(DW_TAG_class_type, class_type)
@@ -364,9 +334,10 @@ void ElfFile::RegisterNewTag(Dwarf32::Tag tag, uint64_t tag_id) {
   }
 }
 
-bool ElfFile::LogDwarfInfo(Dwarf32::Tag tag, Dwarf32::Attribute attribute, 
-                uint64_t tag_id, Dwarf32::Form form, unsigned char* &info, 
-                size_t& info_bytes, void* unit_base) {
+bool DwarfFile::LogDwarfInfo(
+    Dwarf32::Tag tag, Dwarf32::Attribute attribute,  uint64_t tag_id, Dwarf32::Form form, unsigned char* &info, 
+    size_t& info_bytes, void* unit_base) 
+{
   switch(attribute) {
     // Name
     case Dwarf32::Attribute::DW_AT_name:
@@ -396,7 +367,7 @@ bool ElfFile::LogDwarfInfo(Dwarf32::Tag tag, Dwarf32::Attribute attribute,
       if (form != Dwarf32::Form::DW_FORM_ref_addr) {
         // The offset is relative to the current compilation unit, we make it
         // absolute
-        id += reinterpret_cast<unsigned char*>(unit_base) - debug_info_;
+        id += reinterpret_cast<char*>(unit_base) - reinterpret_cast<char*>(debug_info_);
       }
       tree_builder_.SetElementType(id);
       return true;
@@ -416,7 +387,12 @@ bool ElfFile::LogDwarfInfo(Dwarf32::Tag tag, Dwarf32::Attribute attribute,
   return false;
 }
 
-bool ElfFile::GetAllClasses() {
+bool DwarfFile::GetAllClasses() 
+{
+  if (!is_loaded_) {
+    return false;
+  }
+  
   unsigned char* info = reinterpret_cast<unsigned char*>(debug_info_);
   size_t info_bytes = debug_info_size_;
 
@@ -424,53 +400,56 @@ bool ElfFile::GetAllClasses() {
     // Load the compilation unit information
     Dwarf32::CompilationUnitHdr* unit_hdr =
         reinterpret_cast<Dwarf32::CompilationUnitHdr*>(info);
-    DBG_PRINTF("unit_length         = 0x%x\n", unit_hdr->unit_length);
-    DBG_PRINTF("version             = %d\n", unit_hdr->version);
-    DBG_PRINTF("debug_abbrev_offset = 0x%x\n", unit_hdr->debug_abbrev_offset);
-    DBG_PRINTF("address_size        = %d\n", unit_hdr->address_size);
+    DBG_PRINTF("\nunit offset   = 0x%lx\n", info - reinterpret_cast<unsigned char*>(debug_info_));
+    DBG_PRINTF("unit_length   = 0x%x\n", unit_hdr->unit_length);
+    DBG_PRINTF("version       = %d\n", unit_hdr->version);
+    DBG_PRINTF("abbrev_offset = 0x%x\n", unit_hdr->abbrev_offset);
+    DBG_PRINTF("address_size  = %d\n", unit_hdr->address_size);
     unsigned char* info_end = info + unit_hdr->unit_length + sizeof(uint32_t);
     info += sizeof(Dwarf32::CompilationUnitHdr);
     info_bytes -= sizeof(Dwarf32::CompilationUnitHdr);
 
-    if (!LoadAbbrevTags(unit_hdr->debug_abbrev_offset)) {
+    if (!LoadAbbrevTags(unit_hdr->abbrev_offset)) {
       fprintf(stderr, "ERR: Can't load the compilation\n");
       return false;
     }
 
     // For all compilation tags
     while (info < info_end) {
-      uint64_t tag_id = info - debug_info_; 
-      uint32_t info_number = ElfFile::ULEB128(info, info_bytes);
-      DBG_PRINTF(".info+%lx\t Info Number %d\n", info-debug_info_, info_number);
-      if (!info_number) { // reserved
+      uint64_t tag_id = info - reinterpret_cast<unsigned char*>(debug_info_); 
+      uint32_t abbrev_num = DwarfFile::ULEB128(info, info_bytes);
+      DBG_PRINTF(".info+%lx\t Info Number %d\n", info-reinterpret_cast<unsigned char*>(debug_info_), info_number);
+      if (!abbrev_num) { // reserved
         continue;
       }
 
-      std::map<unsigned int, struct TagSection>::iterator it_section =
-          compilation_unit_.find(info_number);
+      std::map<unsigned int, struct TagSection>::iterator it_section = compilation_unit_.find(abbrev_num);
       if (it_section == compilation_unit_.end()) {
-        fprintf(stderr, "ERR: Can't find tag number %d\n", info_number);
+        fprintf(stderr, "ERR at 0x%lx: Can't find compilation unit with abbrev number %d\n", 
+            info-reinterpret_cast<unsigned char*>(debug_info_), abbrev_num);
         return false;
       }
       TagSection* section = &it_section->second;
       unsigned char* abbrev = section->ptr;
-      size_t abbrev_bytes = debug_abbrev_size_ - (abbrev - debug_abbrev_);
+      size_t abbrev_bytes = debug_abbrev_size_ - (abbrev - reinterpret_cast<unsigned char*>(debug_abbrev_));
 
       RegisterNewTag(section->type, tag_id);
 
       // For all attributes
-      while (*abbrev) {
-        Dwarf32::Attribute abbrev_attribute = static_cast<Dwarf32::Attribute>(
-            ElfFile::ULEB128(abbrev, abbrev_bytes));
-        Dwarf32::Form abbrev_form = 
-            static_cast<Dwarf32::Form>(ElfFile::ULEB128(abbrev, abbrev_bytes));
+      while (true) {
+        Dwarf32::Attribute abbrev_attribute = static_cast<Dwarf32::Attribute>(DwarfFile::ULEB128(abbrev, abbrev_bytes));
+        Dwarf32::Form abbrev_form = static_cast<Dwarf32::Form>(DwarfFile::ULEB128(abbrev, abbrev_bytes));
+        if (!abbrev_attribute && !abbrev_form) {
+          // End of the attribute list
+          break;
+        }
 
-        DBG_PRINTF(".info+%lx\t %02x %02x\n", info-debug_info_, 
-                                                abbrev_attribute, abbrev_form);
-        bool logged = LogDwarfInfo(section->type, abbrev_attribute, 
-          tag_id, abbrev_form, info, info_bytes, unit_hdr);
+        DBG_PRINTF(".info+%lx\t %02x %02x\n", 
+            info-reinterpret_cast<unsigned char*>(debug_info_), abbrev_attribute, abbrev_form);
+
+        bool logged = LogDwarfInfo(section->type, abbrev_attribute, tag_id, abbrev_form, info, info_bytes, unit_hdr);
         if (!logged) {
-          ElfFile::PassData(abbrev_form, info, info_bytes);
+          DwarfFile::PassData(abbrev_form, info, info_bytes);
         }
       }
     }

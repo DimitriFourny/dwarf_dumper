@@ -36,7 +36,6 @@ private:
   static std::string EscapeJsonString(const char* str);
 
   ElementType current_element_type_;
-  ElementType previous_element_type_;
 
   struct Parent {
     uint64_t id;

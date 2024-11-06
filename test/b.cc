@@ -2,5 +2,9 @@
 #include <stdio.h>
 
 classB::~classB() {
-    printf("pwet\n");
+    printf("classB\n");
+}
+
+void classB::myVirtualMethod() {
+  printf("classA myVirtualMethod\n");
 }

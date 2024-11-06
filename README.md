@@ -44,13 +44,5 @@ We are following the
 [Google C++ Style Guide](https://google.github.io/styleguide/cppguide.html).
 
 
-# Chromium
 
-In the chromium build, we need to enable all the symbols. Add the following
-arguments in your `args.gn`:
-
-```
-symbol_level=2
-ignore_elf32_limitations=true
-```
 

@@ -2,10 +2,23 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <mach/machine.h>
 #include "macho.h"
 #include "debug.h"
 
+#ifdef __MACH__
+#include <mach/machine.h>
+#else 
+#include <arpa/inet.h>
+typedef int	cpu_type_t;
+typedef int	cpu_subtype_t;
+#define CPU_TYPE_I386		    ((cpu_type_t) 7)
+#define CPU_TYPE_ARM		    ((cpu_type_t) 12)
+#define CPU_ARCH_ABI64		  0x1000000
+#define CPU_TYPE_ARM64		  ((cpu_type_t)(CPU_TYPE_ARM | CPU_ARCH_ABI64))
+#define CPU_TYPE_X86_64		  ((cpu_type_t) (CPU_TYPE_I386 | CPU_ARCH_ABI64))
+#define CPU_SUBTYPE_MASK    0xff000000
+#define	CPU_SUBTYPE_ARM64E  ((cpu_subtype_t) 2)
+#endif
 
 MachOFile::~MachOFile() {
   if (memfile_) {

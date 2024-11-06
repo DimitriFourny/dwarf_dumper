@@ -306,16 +306,16 @@ bool DwarfFile::LoadAbbrevTags(uint32_t abbrev_offset)
     abbrev_bytes -= 2;
   }
 
-  DBG_PRINTF("compilation_unit_.size()  = %lu\n", compilation_unit_.size());
+  // DBG_PRINTF("compilation_unit_.size()  = %lu\n", compilation_unit_.size());
   return true;
 }
 
-#define CASE_REGISTER_NEW_TAG(tag_type, element_type)                         \
-  case Dwarf32::Tag::tag_type:                                                \
-    tree_builder_.AddElement(TreeBuilder::ElementType::element_type, tag_id); \
+#define CASE_REGISTER_NEW_TAG(tag_type, element_type)                                       \
+  case Dwarf32::Tag::tag_type:                                                              \
+    tree_builder_.AddElement(TreeBuilder::ElementType::element_type, tag_id, has_children); \
     break;
 
-void DwarfFile::RegisterNewTag(Dwarf32::Tag tag, uint64_t tag_id) {
+void DwarfFile::RegisterNewTag(Dwarf32::Tag tag, uint64_t tag_id, bool has_children) {
   switch (tag) {
     CASE_REGISTER_NEW_TAG(DW_TAG_array_type, array_type)
     CASE_REGISTER_NEW_TAG(DW_TAG_class_type, class_type)
@@ -330,7 +330,7 @@ void DwarfFile::RegisterNewTag(Dwarf32::Tag tag, uint64_t tag_id) {
     CASE_REGISTER_NEW_TAG(DW_TAG_base_type, base_type)
     CASE_REGISTER_NEW_TAG(DW_TAG_const_type, const_type)
     default:
-      tree_builder_.AddNone();
+      tree_builder_.AddElement(TreeBuilder::ElementType::none, 0, has_children);
   }
 }
 
@@ -415,11 +415,18 @@ bool DwarfFile::GetAllClasses()
     }
 
     // For all compilation tags
+    int depth = 0;
     while (info < info_end) {
       uint64_t tag_id = info - reinterpret_cast<unsigned char*>(debug_info_); 
       uint32_t abbrev_num = DwarfFile::ULEB128(info, info_bytes);
-      DBG_PRINTF(".info+%lx\t Info Number %d\n", info-reinterpret_cast<unsigned char*>(debug_info_), info_number);
-      if (!abbrev_num) { // reserved
+
+      // if (tag_id >= 0x0ab78256 && tag_id < 0x0ab7835d) {
+      DBG_PRINTF(".info+%lx\t Tag 0x%lx ; Info Number %d\n", info-reinterpret_cast<unsigned char*>(debug_info_), tag_id, abbrev_num);
+      // }
+
+      if (!abbrev_num) { // Null DIE so end of the children list
+        tree_builder_.EndOfChildren();
+        depth--;
         continue;
       }
 
@@ -433,7 +440,17 @@ bool DwarfFile::GetAllClasses()
       unsigned char* abbrev = section->ptr;
       size_t abbrev_bytes = debug_abbrev_size_ - (abbrev - reinterpret_cast<unsigned char*>(debug_abbrev_));
 
-      RegisterNewTag(section->type, tag_id);
+      // if (tag_id >= 0x0ab78256 && tag_id < 0x0ab7835d) {
+      DBG_PRINTF("[%d] section->num = %d; section->type = 0x%x ; has_children = %d\n", depth, section->number, section->type, section->has_children);
+      // }
+
+      // Register the new tag (class, structure, namespace, etc.)
+      RegisterNewTag(section->type, tag_id, section->has_children);
+
+      // Increment the depth for the next children 
+      if (section->has_children) {
+        depth++;
+      }
 
       // For all attributes
       while (true) {
@@ -444,8 +461,10 @@ bool DwarfFile::GetAllClasses()
           break;
         }
 
-        DBG_PRINTF(".info+%lx\t %02x %02x\n", 
-            info-reinterpret_cast<unsigned char*>(debug_info_), abbrev_attribute, abbrev_form);
+        if (tag_id >= 0x0ab78256 && tag_id < 0x0ab7835d) {
+          DBG_PRINTF(".info+%lx\t %02x %02x\n", 
+              info-reinterpret_cast<unsigned char*>(debug_info_), abbrev_attribute, abbrev_form);
+        }
 
         bool logged = LogDwarfInfo(section->type, abbrev_attribute, tag_id, abbrev_form, info, info_bytes, unit_hdr);
         if (!logged) {

@@ -1,4 +1,5 @@
-#include "MachOFile.h"
+// #include "MachOFile.h"
+#include "ElfFile.h"
 
 int main(int argc, char* argv[]) {
   if (argc < 2) {
@@ -12,8 +13,9 @@ int main(int argc, char* argv[]) {
   }
 
   std::string binary_path = std::string(argv[1]);
-  MachOFile file;
-  if (!file.Load(binary_path, target_arch)) {
+  ElfFile file;
+  if (!file.Load(binary_path)) {
+    fprintf(stderr, "Can't load the file\n");
     return 2;
   }
 

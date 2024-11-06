@@ -33,7 +33,7 @@ private:
   uint64_t FormDataValue(Dwarf32::Form form, unsigned char* &info, size_t& bytes_available);
   char* FormStringValue(Dwarf32::Form form, unsigned char* &info, size_t& bytes_available);
   bool LoadAbbrevTags(uint32_t abbrev_offset);
-  void RegisterNewTag(Dwarf32::Tag tag, uint64_t tag_id);
+  void RegisterNewTag(Dwarf32::Tag tag, uint64_t tag_id, bool has_children);
   bool LogDwarfInfo(Dwarf32::Tag tag, Dwarf32::Attribute attribute,  uint64_t tag_id, Dwarf32::Form form, 
                     unsigned char* &info, size_t& info_bytes, void* unit_base);
 

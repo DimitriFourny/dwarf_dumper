@@ -17,57 +17,98 @@ std::string TreeBuilder::GenerateJson() {
   return result;
 }
 
-void TreeBuilder::AddNone() {
-  current_element_type_ = ElementType::none; 
+void TreeBuilder::EndOfChildren() {
+  if (nested_elements_.empty()) {
+    // fprintf(stderr, "Found the end of the childrens but we don't have any element\n");
+    // TODO: HOW?!
+    return;
+  }
+  
+  // The next children will be about the previous element
+  nested_elements_.pop_back();
+
+  // Update the type of the current element
+  if (!nested_elements_.empty()) {
+    last_parsed_type_ = elements_[nested_elements_.back()].type_;
+  }
 }
 
-void TreeBuilder::AddElement(ElementType element_type, uint64_t tag_id) {
+void TreeBuilder::AddElement(ElementType element_type, uint64_t tag_id, bool has_children) {
+  bool element_added = false;
+
+  ElementType current_element_type = ElementType::none;
+  if (!nested_elements_.empty()) {
+    current_element_type = elements_[nested_elements_.back()].type_;
+  }
+
   switch(element_type) {
-    case ElementType::member:       // Member
-      if (current_element_type_ == ElementType::none) {
-        return;
+    case ElementType::none:
+      break;
+    case ElementType::member:         // Member
+      if (current_element_type == ElementType::none) {
+        break;
       }
-      if (!elements_.size()) {
+      if (nested_elements_.empty()) {
         fprintf(stderr, "Can't add a member if the element list is empty\n");
-        return;
+        break;
       }
-      elements_.back().members_.push_back(Element(element_type, tag_id));
+      elements_[nested_elements_.back()].members_.push_back(Element(element_type, tag_id));
+      last_parsed_type_ = element_type;
+      element_added = true;
       break;
     case ElementType::inheritance:    // Parent
-      if (current_element_type_ == ElementType::none) {
-        return;
+      if (current_element_type == ElementType::none) {
+        break;
       }  
-      if (!elements_.size()) {
+      if (nested_elements_.empty()) {
         fprintf(stderr, "Can't add a parent if the element list is empty\n");
-        return;
+        break;
       }
-      elements_.back().parents_.push_back({tag_id, 0});
+      elements_[nested_elements_.back()].parents_.push_back({tag_id, 0});
+      last_parsed_type_ = element_type;
+      element_added = true;
       break;
     case ElementType::subrange_type:  // Subrange
       break;                          // Just update the current element type
     default:
       elements_.push_back(Element(element_type, tag_id));
+      last_parsed_type_ = element_type;
+      element_added = true;
   }
 
-  current_element_type_ = element_type; 
+  if (has_children) {
+    if (!element_added) {
+      // Add a useless element to keep the stack in a correct state
+      elements_.push_back(Element(ElementType::none, 0));
+    }
+    nested_elements_.push_back(elements_.size()-1);
+  }
 }
 
 void TreeBuilder::SetElementName(const char* name) {
-  if (current_element_type_ == ElementType::none) {
-    return;
-  }
-  if (!elements_.size()) {
-    fprintf(stderr, "Can't set an element name if the element list is empty\n");
+  if (elements_.empty()) {
     return;
   }
 
-  if (current_element_type_ == ElementType::member) {
-    if (!elements_.back().members_.size()) {
+  if (last_parsed_type_ == ElementType::none) {
+    return;
+  }
+
+  if (last_parsed_type_ == ElementType::member) {
+    if (nested_elements_.empty()) {
+      return;
+    }
+    Element& current_element = elements_[nested_elements_.back()];
+    if (current_element.type_ == ElementType::none) {
+      return; // don't update this element
+    }
+
+    if (current_element.members_.empty()) {
       fprintf(stderr, "Can't set the member name if the members list is empty\n");
       return;
     }
 
-    elements_.back().members_.back().name_ = name;
+    current_element.members_.back().name_ = name;
     return;
   }
 
@@ -75,23 +116,29 @@ void TreeBuilder::SetElementName(const char* name) {
 }
 
 void TreeBuilder::SetElementSize(uint64_t size) {
-   if (current_element_type_ == ElementType::none) {
+  if (elements_.empty()) {
     return;
   }
-  if (!elements_.size()) {
-    fprintf(stderr, "Can't set an element size if the element list is "
-      "empty\n");
+  if (last_parsed_type_ == ElementType::none) {
     return;
   }
 
-  if (current_element_type_ == ElementType::member) {
-    if (!elements_.back().members_.size()) {
+  if (last_parsed_type_ == ElementType::member) {
+    if (nested_elements_.empty()) {
+      return;
+    }
+    Element& current_element = elements_[nested_elements_.back()];
+    if (current_element.type_ == ElementType::none) {
+      return; // don't update this element
+    }
+
+    if (current_element.members_.empty()) {
       fprintf(stderr, "Can't set the member size if the members list is "
         "empty\n");
       return;
     }
 
-    elements_.back().members_.back().size_ = size;
+    current_element.members_.back().size_ = size;
     return;
   }
 
@@ -99,63 +146,96 @@ void TreeBuilder::SetElementSize(uint64_t size) {
 }
 
 void TreeBuilder::SetElementOffset(uint64_t offset) {
-   if (current_element_type_ == ElementType::none) {
+  if (elements_.empty()) {
     return;
   }
-  if (!elements_.size()) {
-    fprintf(stderr, "Can't set an element offset if the element list is "
-      "empty\n");
+  if (last_parsed_type_ == ElementType::none) {
     return;
   }
 
-  switch (current_element_type_) {
-    case ElementType::member:
-      if (!elements_.back().members_.size()) {
+  switch (last_parsed_type_) {
+    case ElementType::member: {
+      if (nested_elements_.empty()) {
+        break;
+      }
+      Element& current_element = elements_[nested_elements_.back()];
+      if (current_element.type_ == ElementType::none) {
+        break; // don't update this element
+      }
+
+      if (current_element.members_.empty()) {
         fprintf(stderr, "Can't set the member offset if the members list is "
           "empty\n");
         break;
       }
-      elements_.back().members_.back().offset_ = offset;
+      current_element.members_.back().offset_ = offset;
       break;
-    case ElementType::inheritance:
-      if (!elements_.back().parents_.size()) {
+    }
+    case ElementType::inheritance: {
+      if (nested_elements_.empty()) {
+        break;
+      }
+      Element& current_element = elements_[nested_elements_.back()];
+      if (current_element.type_ == ElementType::none) {
+        break; // don't update this element
+      }
+
+      if (current_element.parents_.empty()) {
         fprintf(stderr, "Can't set the parent offset if the parents list is "
           "empty\n");
         break;
       }
-      elements_.back().parents_.back().offset = offset;
+      current_element.parents_.back().offset = offset;
       break;
+    }
     default:
       break;
   }
 }
 
 void TreeBuilder::SetElementType(uint64_t type_id) {
-  if (current_element_type_ == ElementType::none) {
+  if (elements_.empty()) {
     return;
   }
-  if (!elements_.size()) {
-    fprintf(stderr, "Can't set an element type if the element list is empty\n");
+  if (last_parsed_type_ == ElementType::none) {
     return;
   }
 
-  switch (current_element_type_) {
-    case ElementType::member:
-      if (!elements_.back().members_.size()) {
+  switch (last_parsed_type_) {
+    case ElementType::member: {
+      if (nested_elements_.empty()) {
+        break;
+      }
+      Element& current_element = elements_[nested_elements_.back()];
+      if (current_element.type_ == ElementType::none) {
+        break; // don't update this element
+      }
+
+      if (current_element.members_.empty()) {
         fprintf(stderr, "Can't set the member type if the members list is "
           "empty\n");
         break;
       }
-      elements_.back().members_.back().type_id_ = type_id;
+      current_element.members_.back().type_id_ = type_id;
       break;
-    case ElementType::inheritance:
-      if (!elements_.back().parents_.size()) {
+    }
+    case ElementType::inheritance: {
+      if (nested_elements_.empty()) {
+        break;
+      }
+      Element& current_element = elements_[nested_elements_.back()];
+      if (current_element.type_ == ElementType::none) {
+        break; // don't update this element
+      }
+
+      if (current_element.parents_.empty()) {
         fprintf(stderr, "Can't set the parent type if the parents list is "
           "empty\n");
         break;
       }
-      elements_.back().parents_.back().id = type_id;
+      elements_[nested_elements_.back()].parents_.back().id = type_id;
       break;
+    }
     case ElementType::subrange_type:
       break; // do nothing
     default:
@@ -165,12 +245,10 @@ void TreeBuilder::SetElementType(uint64_t type_id) {
 }
 
 void TreeBuilder::SetElementCount(uint64_t count) {
-  if (current_element_type_ != ElementType::subrange_type) {
+  if (elements_.empty()) {
     return;
   }
-  if (!elements_.size()) {
-    fprintf(stderr, "Can't set an element count if the element list is"
-      " empty\n");
+  if (last_parsed_type_ != ElementType::subrange_type) {
     return;
   }
   elements_.back().count_ = count;

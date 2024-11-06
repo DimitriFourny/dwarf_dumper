@@ -19,6 +19,11 @@ public:
 
     int memberZ;
 
+    class classInClass {
+      int whynot;
+    };
+    classInClass objClass;
+
 private:
     classB* ptrToB;
     classB inlineB;

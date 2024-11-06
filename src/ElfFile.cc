@@ -43,21 +43,19 @@ bool ElfFile::Load(std::string filepath)
   // Get the headers pointers
   Elf64_Ehdr* file_header_ = reinterpret_cast<Elf64_Ehdr*>(memfile_);
   if (!IsValidFilePtr(file_header_)) {
+    fprintf(stderr, "ERR: Invalid file header\n");
     return false;
   } 
 
   Elf64_Phdr* program_header_ = reinterpret_cast<Elf64_Phdr*>(memfile_ + file_header_->e_phoff);
   if (!IsValidFilePtr(program_header_)) {
+    fprintf(stderr, "ERR: Invalid program header\n");
     return false;
   }
 
   Elf64_Shdr* section_header_ = reinterpret_cast<Elf64_Shdr*>(memfile_ + file_header_->e_shoff);
   if (!IsValidFilePtr(section_header_)) {
-    return false;
-  }
-
-  auto* section_header = &section_header_[file_header_->e_shstrndx];
-  if (!IsValidFilePtr(section_header, sizeof(*section_header))) {
+    fprintf(stderr, "ERR: Invalid section header\n");
     return false;
   }
 

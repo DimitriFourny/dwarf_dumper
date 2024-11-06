@@ -24,8 +24,8 @@ public:
     base_type,
     const_type
   };
-  void AddNone();
-  void AddElement(ElementType element_type, uint64_t tag_id);
+  void EndOfChildren();
+  void AddElement(ElementType element_type, uint64_t tag_id, bool has_children);
   void SetElementName(const char* name);
   void SetElementSize(uint64_t size);
   void SetElementOffset(uint64_t offset);
@@ -34,8 +34,6 @@ public:
 
 private:
   static std::string EscapeJsonString(const char* str);
-
-  ElementType current_element_type_;
 
   struct Parent {
     uint64_t id;
@@ -60,4 +58,6 @@ private:
   };
 
   std::vector<Element> elements_;
+  std::vector<size_t> nested_elements_; // Stack of elements_ index to know parents elements
+  ElementType last_parsed_type_;
 };
